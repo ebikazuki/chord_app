@@ -1,0 +1,310 @@
+name: DiatonicPad-Flet-MVP
+version: 0.1.0
+owner: you
+language: ja
+summary: >
+  Flet を用いて iOS 向けに実装する「ダイアトニックコード確認ユーティリティ」MVP。
+  事前レンダリング済みの和音サンプル音源をアプリに同梱し、低レイテンシで再生する。
+  横画面UIで、キー/モード切替と I〜vii° のパッドをタップして即時に発音できる。
+
+goals:
+  - 作曲・編曲時にダイアトニックコードを即時に鳴らして耳で確認できること
+  - 12キー / 複数モード対応（Ionian 等）
+  - テンション(7/9/11/13)、転回、ボイシングの簡易切替
+  - 直近のタップ列を履歴化・保存し、短いオーディオを書き出せること
+
+non_goals:
+  - ネイティブシンセ実装（MVPはサンプル再生のみ）
+  - DAW 連携 (AUv3 / Inter-App Audio / Ableton Link) の実装
+  - 詳細なボイシング自動生成・代理コード自動提案（以降の拡張）
+
+platform:
+  target: iOS
+  min_ios: "15.0"
+  device_orientation: landscape
+  framework: Flet (Python 3.11+)
+  build_notes:
+    - "flet build ios を前提。Python ランタイムおよび静的アセットをバンドル"
+    - "オーディオは OS 標準の再生 API 経由（Flet 側のメディア再生又はカスタムプラグ）"
+    - "レイテンシ優先で短尺サンプルをプリロード"
+
+audio_engine:
+  strategy: "prebaked-samples"
+  sample_format:
+    container: wav
+    sample_rate_hz: 44100
+    bit_depth: 16
+    channels: 2
+    normalize_peak_db: -1.0
+    fade:
+      attack_ms: 5
+      release_ms: 80
+  polyphony:
+    max_simultaneous: 8
+    voice_steal: oldest
+  assets:
+    instrument: "piano"
+    octave_range: [3, 5]   # 3〜5 オクターブ中心
+    tunning: "A4=440, 12-TET"
+  render_policy:
+    - "和音はビルド前にオフラインで合成し、ファイルとして同梱"
+    - "テンション/転回/ボイシングはサンプル命名規約で用意（下記参照）"
+    - "将来 SoundFont/MIDI 合成へ差替可能な抽象化を保つ"
+
+music_theory:
+  keys: [C, Db, D, Eb, E, F, Gb, G, Ab, A, Bb, B]
+  modes:
+    - Ionian
+    - Dorian
+    - Phrygian
+    - Lydian
+    - Mixolydian
+    - Aeolian
+    - Locrian
+  diatonic_degrees:
+    major: [I, ii, iii, IV, V, vi, vii°]
+    natural_minor: [i, ii°, III, iv, v, VI, VII]
+  tensions_supported: [7, 9, 11, 13]   # MVP は和音セット限定
+  inversions: [root, 1st, 2nd, 3rd]
+  voicings:
+    - name: closed
+      desc: "狭い和音配置"
+    - name: drop2
+      desc: "上から2度目を1オクターブ下へ"
+    - name: root_shell
+      desc: "根音+3度(+7度) の簡易シェル"
+  chord_encoding:
+    description: "キー+モードから度数→コード品質を決定し、テンション/転回/ボイシングで最終ノート集合を確定"
+
+ui:
+  layout:
+    orientation: landscape
+    regions:
+      top_bar:
+        items: [key_selector, mode_selector, bpm_stepper, metronome_toggle]
+      main_grid:
+        left: diatonic_pad   # 7ボタン（I〜vii°）
+        right: option_panel  # tensions, inversions, voicing, octave, volume
+      bottom_bar:
+        items: [transport_play, transport_stop, history_timeline, save_button, export_button]
+  interactions:
+    tap:
+      action: "和音を短く鳴らし履歴へ push"
+    long_press:
+      action: "サスティン（ホールド）"
+    double_tap:
+      action: "同一ボイス停止"
+  accessibility:
+    min_tap_area_pt: 44
+    voice_over: true
+  haptics:
+    enabled: true
+
+features:
+  mvp:
+    - key_and_mode_selection
+    - diatonic_pad_playback
+    - tensions_toggle
+    - inversion_toggle
+    - voicing_toggle
+    - octave_volume_envelope_control
+    - metronome_bpm
+    - history_capture_and_edit: { undo: true, redo: true }
+    - save_progression_local
+    - export_audio_wav_m4a
+  v2_plus:
+    - modal_interchange_suggestions
+    - arpeggio_mode
+    - scale_view_overlay
+    - midi_export
+    - sharing_sheet_integration
+
+data_model:
+  KeySetting:
+    tonic: {type: string, enum: [C, Db, D, Eb, E, F, Gb, G, Ab, A, Bb, B]}
+    mode: {type: string, enum: [Ionian, Dorian, Phrygian, Lydian, Mixolydian, Aeolian, Locrian]}
+    bpm: {type: integer, min: 20, max: 280, default: 100}
+    octave_base: {type: integer, default: 4}
+    voicing: {type: string, enum: [closed, drop2, root_shell], default: drop2}
+    inversion: {type: string, enum: [root, 1st, 2nd, 3rd], default: root}
+    tensions: {type: array, items: {type: integer, enum: [7,9,11,13]}, default: []}
+  ChordEvent:
+    degree: {type: string, example: "I"}
+    quality: {type: string, example: "maj7"}
+    options:
+      tension: {type: array, items: {type: integer}, example: [7,9]}
+      inversion: {type: string, enum: [root, 1st, 2nd, 3rd]}
+      voicing: {type: string}
+    duration_beats: {type: number, default: 1.0}
+    sustain: {type: boolean, default: false}
+  Progression:
+    id: {type: string, format: uuid}
+    name: {type: string}
+    key_setting: {$ref: KeySetting}
+    events: {type: array, items: {$ref: ChordEvent}}
+    created_at: {type: string, format: date-time}
+    updated_at: {type: string, format: date-time}
+
+assets:
+  base_dir: "assets/audio"
+  naming_convention:
+    pattern: "{key}_{mode}_{degree}_{quality}_{voicing}_{inv}_{tensions}_{oct}.wav"
+    examples:
+      - "C_Ionian_I_maj7_drop2_root_7-9_oct4.wav"
+      - "A_Aeolian_v_min7_closed_1st__oct3.wav"
+  minimum_set_for_mvp:
+    description: "MVP は Ionian/Aeolian で各 12 キー × 7 度数 × (triad, 7th) × 2 voicings × 2 inversions を推奨"
+    estimation:
+      keys: 12
+      modes: 2
+      degrees: 7
+      qualities_per_degree: 2      # triad & 7th
+      voicings: 2                  # closed, drop2
+      inversions: 2                # root, 1st
+      octaves: 2                   # oct3, oct4
+      total_files: "12*2*7*2*2*2*2 = 2688 (上限)。段階導入可"
+  preload_policy:
+    - "起動時に現在キー/モード周辺のサンプルのみプリロード"
+    - "切替時にバックグラウンド・プリロード（LRU キャッシュ）"
+
+persistence:
+  storage:
+    type: "local_json"
+    files:
+      - "data/progressions.json"
+  schema_version: 1
+
+export:
+  audio:
+    formats: [wav, m4a]
+    length_bars_default: 4
+    normalize: true
+    include_click_track: optional
+  # 将来:
+  midi:
+    supported: false
+
+repo_layout:
+  - app/
+  - app/main.py            # Flet エントリ
+  - app/ui/                # UI コンポーネント
+  - app/core/              # 音名変換・和音構築・再生API
+  - app/models/            # Pydantic 風データモデル
+  - app/services/          # 保存/書き出し/履歴
+  - assets/audio/          # サンプル
+  - assets/icons/
+  - data/
+  - tests/
+
+flet_api_contracts:
+  modules:
+    - name: core.theory
+      functions:
+        - name: degree_to_chord
+          args: [key_setting, degree]
+          returns: "Chord(spec) {notes:[MIDI], quality, tensions, voicing, inversion}"
+        - name: chord_to_asset_path
+          args: [chord_spec]
+          returns: "str (path to wav)"
+    - name: core.audio
+      functions:
+        - name: preload_assets
+          args: [key_setting]
+          returns: "None"
+        - name: play_sample
+          args: [path, sustain=false, gain=1.0]
+          returns: "voice_id"
+        - name: stop_voice
+          args: [voice_id]
+          returns: "None"
+        - name: stop_all
+          args: []
+          returns: "None"
+    - name: services.history
+      functions:
+        - name: push_event
+          args: [ChordEvent]
+        - name: undo
+          args: []
+        - name: redo
+          args: []
+    - name: services.persistence
+      functions:
+        - name: save_progression
+          args: [Progression]
+        - name: list_progressions
+          args: []
+        - name: load_progression
+          args: [id]
+
+acceptance_criteria:
+  latency:
+    tap_to_sound_ms: { target: 30, max: 60 }
+  correctness:
+    - "12キー×(Ionian/Aeolian)×7度数の和音品質が理論通り"
+    - "転回/ボイシング指定がサンプルに正しく反映される"
+  stability:
+    - "1時間の操作（>2000再生）でクラッシュ/無音化がない"
+  export:
+    - "WAV/M4A を 4/8 小節で書き出し可能、クリッピング無し、頭/末尾フェード良好"
+
+telemetry:
+  enabled: false   # MVPは無し（後日匿名計測を検討）
+
+testing:
+  devices:
+    - "iPhone SE (3rd)"
+    - "iPhone 12"
+    - "iPhone 15"
+    - "iPad (任意)"
+  cases:
+    - name: tap_latency
+      steps:
+        - "アプリ起動→C Ionian→Iを10連打"
+      expected: "音切れ/発音遅延が無い（主観+計測）"
+    - name: switch_key_mode
+      steps:
+        - "Ionian→Aeolian→Ionian の切替中に連打"
+      expected: "切替後の正しいサンプルが鳴る／ノイズなし"
+    - name: tension_inversion_voicing
+      steps:
+        - "7/9/11/13 を順にトグル、転回/ボイシングを変えつつ再生"
+      expected: "該当サンプルが参照され、想定のハーモニーになる"
+    - name: history_save_export
+      steps:
+        - "I-vi-IV-V をタップ→保存→WAV で書き出し"
+      expected: "履歴が保存され、書き出しファイルが再生可能"
+  audio_validation:
+    - "周波数誤差 < 1 cent（事前合成段階で検証済みとする）"
+
+risks_and_mitigations:
+  - risk: "Flet のメディア再生でレイテンシが大きい"
+    mitigation: "短尺サンプルのプリロード、可能ならネイティブプラグイン検討"
+  - risk: "アセット点数の増加でバイナリ肥大"
+    mitigation: "段階導入・必要セットのみ同梱・LRU キャッシュ"
+  - risk: "命名規約の拡張で組合せ爆発"
+    mitigation: "MVP は Ionian/Aeolian + triad/7th + 2 voicings + 2 inversions に限定"
+
+roadmap:
+  m1:
+    duration_weeks: 2-3
+    scope:
+      - "UIパッド/オプション/履歴"
+      - "サンプル再生・プリロード"
+      - "保存・WAV書き出し"
+  m2:
+    scope:
+      - "クリック/テンポ同期"
+      - "アルペジオ"
+      - "UI磨き・アクセシビリティ"
+  m3:
+    scope:
+      - "代理コード提案"
+      - "MIDI書き出し"
+      - "共有シート・クラウド保存（任意）"
+
+tasks_immediate:
+  - "UIワイヤーに沿って Flet コンポーネント配置（横画面）"
+  - "assets/audio の命名規約に従うダミーサンプルを2〜3種配置"
+  - "core.theory / core.audio / services.* のスタブを作成"
+  - "I-vi-IV-V の再生→履歴→WAV書き出しまで通す E2E スモークテスト"
