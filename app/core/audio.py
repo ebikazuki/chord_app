@@ -19,10 +19,10 @@ class AudioEngine:
     
     def play_sample(self, path: str, sustain: bool = False, gain: float = 1.0) -> str:
         """Play audio sample and return voice ID"""
-        if not Path(path).exists():
-            print(f"Warning: Audio file not found: {path}")
-            path = "assets/audio/C_Ionian_I_maj_drop2_root__oct4.wav"
-            if not Path(path).exists():
+        if not Path(f"assets/{path}").exists():
+            print(f"Warning: Audio file not found: assets/{path}")
+            path = "audio/C_Ionian_I_maj_drop2_root__oct4.wav"
+            if not Path(f"assets/{path}").exists():
                 print("Error: No audio samples available")
                 return "error"
         

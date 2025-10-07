@@ -73,4 +73,4 @@ def chord_to_asset_path(key_setting: KeySetting, degree_idx: int) -> str:
                 f"{key_setting.voicing}_{key_setting.inversion}_"
                 f"{tensions_str}_oct{key_setting.octave_base}.wav")
     
-    return f"assets/audio/{filename}"
+    return f"audio/{filename}"

@@ -147,4 +147,4 @@ def main(page: ft.Page):
     update_status()
 
 if __name__ == "__main__":
-    ft.app(main)
+    ft.app(main, assets_dir="assets")
